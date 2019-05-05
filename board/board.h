@@ -32,6 +32,7 @@ extern "C" {
 #define HEAP_END                       STM32_SRAM1_END
 
 void SystemClock_Config(void);
+void rt_update_system_clock(void);
 
 #ifdef __cplusplus
 }
