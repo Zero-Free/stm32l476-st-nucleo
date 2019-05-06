@@ -17,7 +17,6 @@ static void uart_console_reconfig(void)
     struct serial_configure config = RT_SERIAL_CONFIG_DEFAULT;
 
     rt_device_control(rt_console_get_device(), RT_DEVICE_CTRL_CONFIG, &config);
-
 }
 
 /**
@@ -25,7 +24,7 @@ static void uart_console_reconfig(void)
  *
  * @param pm pointer to power manage structure
  */
-static void _drv_pm_enter(struct rt_pm *pm, uint8_t mode)
+static void sleep(struct rt_pm *pm, uint8_t mode)
 {
     switch (mode)
     {
@@ -39,25 +38,24 @@ static void _drv_pm_enter(struct rt_pm *pm, uint8_t mode)
     case PM_SLEEP_MODE_LIGHT:
         if (pm->run_mode == PM_RUN_MODE_LOW_SPEED)
         {
-            /* Enter SLEEP Mode, Main regulator is ON */
-            HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+            /* Enter LP SLEEP Mode, Enable low-power regulator */
+            HAL_PWR_EnterSLEEPMode(PWR_LOWPOWERREGULATOR_ON, PWR_SLEEPENTRY_WFI);
         }
         else
         {
-            /* Enter LP SLEEP Mode, Enable low-power regulator */
-            HAL_PWR_EnterSLEEPMode(PWR_LOWPOWERREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+            /* Enter SLEEP Mode, Main regulator is ON */
+            HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
         }
         break;
 
     case PM_SLEEP_MODE_DEEP:
-        /* Enter STOP 2 mode */
+        /* Enter STOP 2 mode  */
         HAL_PWREx_EnterSTOP2Mode(PWR_STOPENTRY_WFI);
         /* Re-configure the system clock */
-        rt_update_system_clock();
+        SystemClock_ReConfig(pm->run_mode);
         break;
 
     case PM_SLEEP_MODE_STANDBY:
-        ;
         /* Enter STANDBY mode */
         HAL_PWR_EnterSTANDBYMode();
         break;
@@ -71,6 +69,62 @@ static void _drv_pm_enter(struct rt_pm *pm, uint8_t mode)
         RT_ASSERT(0);
         break;
     }
+}
+
+static uint8_t run_speed[PM_RUN_MODE_MAX][2] =
+{
+    {80, 0},
+    {80, 1},
+    {24, 2},
+    {2,  3},
+};
+
+static void run(struct rt_pm *pm, uint8_t mode, uint32_t frequency)
+{
+    static uint8_t last_mode;
+    static char *run_str[] = PM_RUN_MODE_NAMES;
+
+    if (mode == last_mode)
+        return;
+    last_mode = mode;
+
+    /* 1. 设置 MSI 作为 SYSCLK 时钟源,以修改 PLL */
+    SystemClock_MSI_ON();
+
+    /* 2. 根据RUN模式切换时钟频率(HSI) */
+    switch (mode)
+    {
+    case PM_RUN_MODE_HIGH_SPEED:
+    case PM_RUN_MODE_NORMAL_SPEED:
+        SystemClock_80M();
+        /* Configure the main internal regulator output voltage (Range1 by default)*/
+        HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1);
+        break;
+    case PM_RUN_MODE_MEDIUM_SPEED:
+        SystemClock_24M();
+        /* Configure the main internal regulator output voltage */
+        HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE2);
+        break;
+    case PM_RUN_MODE_LOW_SPEED:
+        SystemClock_2M();
+        /* Enter LP RUN mode */
+        HAL_PWREx_EnableLowPowerRunMode();
+        break;
+    default:
+        break;
+    }
+
+    /* 3. 关闭 MSI 时钟 */
+    // SystemClock_MSI_OFF();
+
+    /* 4. 更新外设时钟 */
+    uart_console_reconfig();
+    /* Re-Configure the Systick time */
+    HAL_SYSTICK_Config(HAL_RCC_GetHCLKFreq() / RT_TICK_PER_SECOND);
+    /* Re-Configure the Systick */
+    HAL_SYSTICK_CLKSourceConfig(SYSTICK_CLKSOURCE_HCLK);
+
+    rt_kprintf("switch to %s mode, frequency = %d MHz\n", run_str[mode], run_speed[mode][0]);
 }
 
 /**
@@ -114,7 +168,7 @@ static rt_tick_t stm32l4_os_tick_from_pm_tick(rt_uint32_t tick)
  * @param pm Pointer to power manage structure
  * @param timeout How many OS Ticks that MCU can sleep
  */
-static void _drv_pm_timer_start(struct rt_pm *pm, rt_uint32_t timeout)
+static void pm_timer_start(struct rt_pm *pm, rt_uint32_t timeout)
 {
     RT_ASSERT(pm != RT_NULL);
     RT_ASSERT(timeout > 0);
@@ -138,7 +192,7 @@ static void _drv_pm_timer_start(struct rt_pm *pm, rt_uint32_t timeout)
  *
  * @param pm Pointer to power manage structure
  */
-static void _drv_pm_timer_stop(struct rt_pm *pm)
+static void pm_timer_stop(struct rt_pm *pm)
 {
     RT_ASSERT(pm != RT_NULL);
 
@@ -153,7 +207,7 @@ static void _drv_pm_timer_stop(struct rt_pm *pm)
  *
  * @return OS Ticks
  */
-static rt_tick_t _drv_pm_timer_get_tick(struct rt_pm *pm)
+static rt_tick_t pm_timer_get_tick(struct rt_pm *pm)
 {
     rt_uint32_t timer_tick;
 
@@ -171,14 +225,17 @@ int drv_pm_hw_init(void)
 {
     static const struct rt_pm_ops _ops =
     {
-        _drv_pm_enter,
-        RT_NULL,
-        _drv_pm_timer_start,
-        _drv_pm_timer_stop,
-        _drv_pm_timer_get_tick
+        sleep,
+        run,
+        pm_timer_start,
+        pm_timer_stop,
+        pm_timer_get_tick
     };
 
     rt_uint8_t timer_mask = 0;
+
+    /* Enable Power Clock */
+    __HAL_RCC_PWR_CLK_ENABLE();
 
     /* initialize timer mask */
     timer_mask = 1UL << PM_SLEEP_MODE_DEEP;

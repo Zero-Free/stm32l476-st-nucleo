@@ -80,7 +80,7 @@ void _Error_Handler(char *s, int num)
 {
     /* USER CODE BEGIN Error_Handler */
     /* User can add his own implementation to report the HAL error return state */
-    while(1)
+    while (1)
     {
     }
     /* USER CODE END Error_Handler */
@@ -97,10 +97,12 @@ void rt_hw_us_delay(rt_uint32_t us)
     start = SysTick->VAL;
     reload = SysTick->LOAD;
     us_tick = SystemCoreClock / 1000000UL;
-    do {
+    do
+    {
         now = SysTick->VAL;
         delta = start > now ? start - now : reload + start - now;
-    } while(delta < us_tick * us);
+    }
+    while (delta < us_tick * us);
 }
 
 /**
@@ -122,7 +124,8 @@ RT_WEAK void rt_hw_board_init()
     HAL_Init();
 
     /* System clock initialization */
-    SystemClock_Config();
+    // SystemClock_Config();
+    SystemClock_80M();
     rt_hw_systick_init();
 
     /* Heap initialization */
