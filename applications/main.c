@@ -23,8 +23,8 @@ static rt_event_t wakeup_event;
 
 static void wakeup_callback(void *args)
 {
-    rt_pm_run_mode_set(PM_RUN_MODE_MEDIUM_SPEED, 0);
-    rt_pm_release(PM_SLEEP_MODE_DEEP);
+    // rt_pm_run_mode_set(PM_RUN_MODE_MEDIUM_SPEED);
+    // rt_pm_release(PM_SLEEP_MODE_DEEP);
     rt_event_send(wakeup_event, WAKEUP_EVENT_BUTTON);
 }
 
@@ -114,7 +114,7 @@ int main(void)
             /* 退出STOP2 模式 */
             rt_pm_release(PM_SLEEP_MODE_DEEP);
             /* 切换运行模式(24M) */
-            rt_pm_run_mode_set(PM_RUN_MODE_MEDIUM_SPEED, 0);
+            rt_pm_run_enter(PM_RUN_MODE_MEDIUM_SPEED);
             /* LED 闪烁 */
             led_app();
         }
